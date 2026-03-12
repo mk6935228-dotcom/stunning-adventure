@@ -1,3 +1,6 @@
+
+    msg = update.message.text
+    uid = update.message.from_user.id
 from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 import sqlite3
@@ -33,9 +36,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
-    msg = update.message.text
-    uid = update.message.from_user.id
 
     if msg == "💰 Balance":
         cursor.execute("SELECT balance FROM users WHERE id=?",(uid,))
@@ -88,18 +88,16 @@ app.run_polling()
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
-TOKEN = "8622777792:AAHzIKoR-J6YUFG-abAicHvPTARfrmSHBpI"
+BOT_TOKEN = "8622777792:AAHzIKoR-J6YUFG-abAicHvPTARfrmSHBpI"
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "🔥 Welcome Mohit!\n\nThis is your Telegram ID Seller Bot."
-    )
+    await update.message.reply_text("Welcome to Gaming ID Shop Bot")
 
-app = ApplicationBuilder().token(TOKEN).build()
-
+app = ApplicationBuilder().token(BOT_TOKEN).build()
 app.add_handler(CommandHandler("start", start))
 
 app.run_polling()
+
 
 
 
