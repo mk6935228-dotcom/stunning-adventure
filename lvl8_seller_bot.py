@@ -125,9 +125,9 @@ def how_to_use_cmd(message):
         "👋 **BOT KO KAISE USE KAREIN (GUIDE)**\n\n"
         "Bhai, bot use karna bohot hi aasaan hai! Bas ye steps follow karo:\n\n"
         "1️⃣ **BALANCE ADD KAREIN:** Sabse pehle `ADD FUNDS` par click karein aur jitne paise add karne hain wo likhein (min ₹1). QR code generate hoga, uspar pay karke `CHECK ✅` button dabayein.\n\n"
-        "2️⃣ **CATEGORY CHUNEIN:** Recharge hone ke baad `FACEBOOK ID` ya `GOOGLE ID` wale button par click karein.\n\n"
-        "3️⃣ **QUANTITY SELECT KAREIN:** Aapko buttons dikhenge jaise `F-BUY 1`, `F-BUY 2` wagairah. Aapko ek saath jitni IDs chahiye, utne number wale button ko select karein.\n\n"
-        "4️⃣ **ID DELIVERY:** Jaise hi aap button dabayenge, bot aapke paise kaat lega aur turant aapko **Login Emails & Passwords** isi chat mein bhej dega!\n\n"
+        "2️⃣ **CATEGORY CHUNEIN:** Recharge hone ke baad `FACEBOOK ID`, `GOOGLE ID` ya `40lv+ 125 star` wale button par click karein.\n\n"
+        "3️⃣ **QUANTITY SELECT KAREIN:** Aapko buttons dikhenge jaise `F-BUY`, `G-BUY` ya `L-BUY`. Aapko ek saath jitni IDs chahiye, utne number wale button ko select karein.\n\n"
+        "4️⃣ **ID DELIVERY:** Jaise hi aap button dabayenge, bot aapke paise kaat lega aur turant aapko **Login Details** isi chat mein bhej dega!\n\n"
         "⚠️ **DHYAN RAKHEIN:** Login karne ke baad agar koi dikkaat aaye toh turant owner @Mohit\\_modz ko contact karein."
     )
     bot.send_message(message.chat.id, text, parse_mode='Markdown')
@@ -207,16 +207,18 @@ def handle_auto_check(call):
     user_id = call.from_user.id
     
     conn = get_db()
-    c = conn.cursor()
-    c.execute('SELECT * FROM transactions WHERE client_txn_id=?', (client_txn_id,))
+    c = conn.cursor(cursor_factory=RealDictCursor)
+    c.execute('SELECT * FROM transactions WHERE client_txn_id=%s', (client_txn_id,))
     txn = c.fetchone()
     
     if not txn:
         bot.answer_callback_query(call.id, "❌ Invalid Order ID!", show_alert=True)
+        c.close()
         return conn.close()
         
     if txn['status'] == 'SUCCESS':
         bot.answer_callback_query(call.id, "✅ This payment is already claimed!", show_alert=True)
+        c.close()
         return conn.close()
         
     date_str = txn['date']
@@ -233,8 +235,8 @@ def handle_auto_check(call):
         if res.get('status') == True:
             api_status = str(res.get('results', {}).get('status', 'PENDING')).upper()
             if api_status in ['COMPLETED', 'SUCCESS', 'PAID']:
-                c.execute('UPDATE users SET balance = balance + ? WHERE user_id=?', (amount, user_id))
-                c.execute('UPDATE transactions SET status="SUCCESS" WHERE client_txn_id=?', (client_txn_id,))
+                c.execute('UPDATE users SET balance = balance + %s WHERE user_id=%s', (amount, user_id))
+                c.execute('UPDATE transactions SET status=%s WHERE client_txn_id=%s', ('SUCCESS', client_txn_id))
                 conn.commit()
                 bot.send_message(call.message.chat.id, f"🎉 *AUTOMATIC SUCCESS!*\n₹{amount} has been added to your wallet automatically!", parse_mode='Markdown')
                 
@@ -249,6 +251,7 @@ def handle_auto_check(call):
             bot.answer_callback_query(call.id, "⚠️ Payment NOT FOUND! Scan the QR and pay exact amount first.", show_alert=True)
     except Exception as e:
         bot.answer_callback_query(call.id, f"❌ Gateway error: {e}", show_alert=True)
+    c.close()
     conn.close()
 
 # ================= BUY IDs =================
@@ -376,8 +379,10 @@ def process_rem_admin(message):
     try:
         uid = int(message.text)
         conn = get_db()
-        conn.cursor().execute('DELETE FROM admins WHERE user_id=?', (uid,))
+        c = conn.cursor()
+        c.execute('DELETE FROM admins WHERE user_id=%s', (uid,))
         conn.commit()
+        c.close()
         conn.close()
         bot.send_message(message.chat.id, f"✅ User {uid} removed from admins.")
     except:
