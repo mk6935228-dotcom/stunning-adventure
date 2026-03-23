@@ -87,7 +87,8 @@ def main_menu(user_id):
         KeyboardButton('MY BALANCE')
     )
     markup.add(
-        KeyboardButton('How To Use')
+        KeyboardButton('How To Use'),
+        KeyboardButton('40lv+ 125 star')
     )
     if is_admin(user_id):
         markup.add(KeyboardButton('🛠 Admin Panel'))
@@ -139,9 +140,11 @@ def stock_cmd(message):
     fb_c = c.fetchone()['c']
     c.execute("SELECT count(*) as c FROM inventory WHERE category='GOOGLE' AND status='AVAILABLE'")
     g_c = c.fetchone()['c']
+    c.execute("SELECT count(*) as c FROM inventory WHERE category='LEVEL40' AND status='AVAILABLE'")
+    lv40_c = c.fetchone()['c']
     c.close()
     conn.close()
-    bot.send_message(message.chat.id, f"▶ *AVAILABLE STOCK* ◀\n\n`📄 FACEBOOK ACCOUNTS ▶ {fb_c}`\n\n`📄 GOOGLE ACCOUNTS  ▶ {g_c}`", parse_mode='Markdown')
+    bot.send_message(message.chat.id, f"▶ *AVAILABLE STOCK* ◀\n\n`📄 FACEBOOK ACCOUNTS ▶ {fb_c}`\n\n`📄 GOOGLE ACCOUNTS  ▶ {g_c}`\n\n`⭐ 40LV+ 125 STAR   ▶ {lv40_c}`", parse_mode='Markdown')
 
 # ================= 100% AUTO PAYMENT =================
 
@@ -249,9 +252,11 @@ def handle_auto_check(call):
     conn.close()
 
 # ================= BUY IDs =================
-@bot.message_handler(func=lambda m: m.text in ['FACEBOOK ID', 'GOOGLE ID'])
+@bot.message_handler(func=lambda m: m.text in ['FACEBOOK ID', 'GOOGLE ID', '40lv+ 125 star'])
 def show_ids(message):
-    cat = 'FB' if message.text == 'FACEBOOK ID' else 'GOOGLE'
+    if message.text == 'FACEBOOK ID': cat = 'FB'
+    elif message.text == 'GOOGLE ID': cat = 'GOOGLE'
+    else: cat = 'LEVEL40'
     conn = get_db()
     c = conn.cursor(cursor_factory=RealDictCursor)
     c.execute('SELECT id, price FROM inventory WHERE category=%s AND status=%s', (cat, 'AVAILABLE'))
@@ -270,7 +275,9 @@ def show_ids(message):
     markup = InlineKeyboardMarkup(row_width=3)
     buttons = []
     max_buy = min(5, stock_count)
-    prefix = 'F-BUY' if cat == 'FB' else 'G-BUY'
+    if cat == 'FB': prefix = 'F-BUY'
+    elif cat == 'GOOGLE': prefix = 'G-BUY'
+    else: prefix = 'L-BUY'
     
     for qty in range(1, max_buy + 1):
         buttons.append(InlineKeyboardButton(f"{prefix} {qty}", callback_data=f"buy_{cat}_{qty}"))
@@ -332,6 +339,7 @@ def handle_exit(call):
 def admin_panel(message):
     markup = InlineKeyboardMarkup(row_width=2)
     markup.add(InlineKeyboardButton("➕ Add FB ID", callback_data="admin_add_fb"), InlineKeyboardButton("➕ Add Google ID", callback_data="admin_add_g"))
+    markup.add(InlineKeyboardButton("➕ Add 40lv+ 125 star", callback_data="admin_add_lv40"))
     markup.add(InlineKeyboardButton("📦 Bulk Add FB/Google", callback_data="admin_bulk_add"))
     markup.add(InlineKeyboardButton("📢 Broadcast Msg", callback_data="admin_broadcast"), InlineKeyboardButton("💰 Add User Balance", callback_data="admin_add_bal_btn"))
     markup.add(InlineKeyboardButton("📝 Manage Inventory", callback_data="admin_manage_inv"))
@@ -408,16 +416,31 @@ def handle_delete_inv(call):
     bot.answer_callback_query(call.id, f"✅ ID {inv_id} DELETED!", show_alert=True)
     bot.delete_message(call.message.chat.id, call.message.message_id)
 
-@bot.callback_query_handler(func=lambda call: call.data in ['admin_add_fb', 'admin_add_g'] and is_admin(call.from_user.id))
+@bot.callback_query_handler(func=lambda call: call.data in ['admin_add_fb', 'admin_add_g', 'admin_add_lv40'] and is_admin(call.from_user.id))
 def add_id_start(call):
-    cat = 'FB' if call.data == 'admin_add_fb' else 'GOOGLE'
-    msg = bot.send_message(call.message.chat.id, f"Send Login Details for {cat} ID (e.g. Email/Pass):")
-    bot.register_next_step_handler(msg, process_add_id_login, cat)
+    if call.data == 'admin_add_fb': cat = 'FB'
+    elif call.data == 'admin_add_g': cat = 'GOOGLE'
+    else: cat = 'LEVEL40'
+    
+    if cat == 'LEVEL40':
+        markup = InlineKeyboardMarkup()
+        markup.add(InlineKeyboardButton("Facebook Type", callback_data="lv40_type_FB"), InlineKeyboardButton("Google Type", callback_data="lv40_type_GOOGLE"))
+        bot.send_message(call.message.chat.id, "Select Login Type for this Level 40 ID:", reply_markup=markup)
+    else:
+        msg = bot.send_message(call.message.chat.id, f"Send Login Details for {cat} ID (e.g. Email/Pass):")
+        bot.register_next_step_handler(msg, process_add_id_login, cat)
 
-def process_add_id_login(message, cat):
+@bot.callback_query_handler(func=lambda call: call.data.startswith('lv40_type_'))
+def handle_lv40_type(call):
+    login_type = call.data.replace('lv40_type_', '')
+    msg = bot.send_message(call.message.chat.id, f"Send Login Details for {login_type} (Level 40 ID):")
+    bot.register_next_step_handler(msg, process_add_id_login, 'LEVEL40', login_type)
+
+def process_add_id_login(message, cat, login_type=None):
     if message.text == '/cancel': return
+    final_login = f"[{login_type}] {message.text}" if login_type else message.text
     msg = bot.send_message(message.chat.id, "Enter Price for this ID (Number only):")
-    bot.register_next_step_handler(msg, process_add_id_price, cat, message.text)
+    bot.register_next_step_handler(msg, process_add_id_price, cat, final_login)
 
 def process_add_id_price(message, cat, login):
     try:
@@ -435,12 +458,12 @@ def process_add_id_price(message, cat, login):
 @bot.callback_query_handler(func=lambda call: call.data == 'admin_bulk_add' and is_admin(call.from_user.id))
 def bulk_id_start(call):
     markup = ReplyKeyboardMarkup(one_time_keyboard=True, resize_keyboard=True)
-    markup.add(KeyboardButton("FB"), KeyboardButton("GOOGLE"))
+    markup.add(KeyboardButton("FB"), KeyboardButton("GOOGLE"), KeyboardButton("LEVEL40"))
     msg = bot.send_message(call.message.chat.id, "📝 Select Category for Bulk Add:", reply_markup=markup)
     bot.register_next_step_handler(msg, process_bulk_cat)
 
 def process_bulk_cat(message):
-    if message.text not in ["FB", "GOOGLE"]:
+    if message.text not in ["FB", "GOOGLE", "LEVEL40"]:
         return bot.send_message(message.chat.id, "❌ Cancelled. Invalid Category.", reply_markup=main_menu(message.from_user.id))
     cat = message.text
     msg = bot.send_message(message.chat.id, f"📥 Send ALL `{cat}` Usernames/Emails/Numbers (One per line):\n\nExample:\nuser1@gmail.com\nuser2\n12345678", parse_mode='Markdown', reply_markup=telebot.types.ReplyKeyboardRemove())
