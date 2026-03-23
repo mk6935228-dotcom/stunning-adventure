@@ -21,8 +21,8 @@ SAFE_ADMIN = ADMIN_USER.replace('_', '\\_')
 SUPPORT_CHANNEL = '@support'
 UPI_ID = 'paytm.slsdhpu@p'
 UPIGATEWAY_KEY = '61063d-a23876-6c09b9-bf46c0-0f8ff2' # Aapka UPIGateway API key
-# Supabase - PostgreSQL URI (Password supra@ultimat encoded as supra%40ultimat)
-DB_URL = 'postgresql://postgres:supra%40ultimat@db.opseljsvrnclsohcsqiq.supabase.co:6543/postgres'
+# Supabase - Stable Cloud Pooler (IPv4 Compatible for Render)
+DB_URL = 'postgresql://postgres.opseljsvrnclsohcsqiq:supra%40ultimat@aws-1-ap-northeast-1.pooler.supabase.com:6543/postgres'
 DB_NAME = 'seller_bot.db' # Legacy name, now using DB_URL
 
 bot = telebot.TeleBot(TOKEN)
