@@ -1,6 +1,7 @@
 import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
-import sqlite3
+import psycopg2
+from psycopg2.extras import RealDictCursor
 import time
 import requests
 import uuid
@@ -9,6 +10,8 @@ import urllib.parse
 from flask import Flask
 import threading
 import os
+import schedule
+import time
 
 # ================= CONFIGURATION =================
 TOKEN = '8679506198:AAFbuNw_R0D1CO5BSSkDTqhwClceZtTuGhk'
@@ -18,23 +21,26 @@ SAFE_ADMIN = ADMIN_USER.replace('_', '\\_')
 SUPPORT_CHANNEL = '@support'
 UPI_ID = 'paytm.slsdhpu@p'
 UPIGATEWAY_KEY = '61063d-a23876-6c09b9-bf46c0-0f8ff2' # Aapka UPIGateway API key
+# Supabase - PostgreSQL URI (Password supra@ultimat encoded as supra%40ultimat)
+DB_URL = 'postgresql://postgres:supra%40ultimat@db.opseljsvrnclsohcsqiq.supabase.co:5432/postgres'
+DB_NAME = 'seller_bot.db' # Legacy name, now using DB_URL
 
 bot = telebot.TeleBot(TOKEN)
 
 # ================= DATABASE =================
 def get_db():
-    conn = sqlite3.connect('seller_bot.db', check_same_thread=False)
-    conn.row_factory = sqlite3.Row
+    conn = psycopg2.connect(DB_URL)
     return conn
 
 def init_db():
     conn = get_db()
     c = conn.cursor()
-    c.execute('CREATE TABLE IF NOT EXISTS users (user_id INTEGER PRIMARY KEY, balance INTEGER DEFAULT 0)')
-    c.execute('CREATE TABLE IF NOT EXISTS admins (user_id INTEGER PRIMARY KEY)')
-    c.execute('CREATE TABLE IF NOT EXISTS inventory (id INTEGER PRIMARY KEY AUTOINCREMENT, category TEXT, price INTEGER, login_details TEXT, status TEXT DEFAULT "AVAILABLE")')
-    c.execute('CREATE TABLE IF NOT EXISTS transactions (client_txn_id TEXT PRIMARY KEY, user_id INTEGER, amount INTEGER, date TEXT, status TEXT DEFAULT "PENDING")')
+    c.execute('CREATE TABLE IF NOT EXISTS users (user_id BIGINT PRIMARY KEY, balance INTEGER DEFAULT 0)')
+    c.execute('CREATE TABLE IF NOT EXISTS admins (user_id BIGINT PRIMARY KEY)')
+    c.execute('CREATE TABLE IF NOT EXISTS inventory (id SERIAL PRIMARY KEY, category TEXT, price INTEGER, login_details TEXT, status TEXT DEFAULT \'AVAILABLE\')')
+    c.execute('CREATE TABLE IF NOT EXISTS transactions (client_txn_id TEXT PRIMARY KEY, user_id BIGINT, amount INTEGER, date TEXT, status TEXT DEFAULT \'PENDING\')')
     conn.commit()
+    c.close()
     conn.close()
 
 init_db()
@@ -42,25 +48,28 @@ init_db()
 def is_admin(user_id):
     if user_id == ADMIN_ID: return True
     conn = get_db()
-    c = conn.cursor()
-    c.execute('SELECT 1 FROM admins WHERE user_id=?', (user_id,))
+    c = conn.cursor(cursor_factory=RealDictCursor)
+    c.execute('SELECT 1 FROM admins WHERE user_id=%s', (user_id,))
     res = c.fetchone()
+    c.close()
     conn.close()
     return bool(res)
 
 def get_balance(user_id):
     conn = get_db()
-    c = conn.cursor()
-    c.execute('SELECT balance FROM users WHERE user_id=?', (user_id,))
+    c = conn.cursor(cursor_factory=RealDictCursor)
+    c.execute('SELECT balance FROM users WHERE user_id=%s', (user_id,))
     res = c.fetchone()
+    c.close()
     conn.close()
     return res['balance'] if res else 0
 
 def update_balance(user_id, amount):
     conn = get_db()
     c = conn.cursor()
-    c.execute('UPDATE users SET balance = balance + ? WHERE user_id = ?', (amount, user_id))
+    c.execute('UPDATE users SET balance = balance + %s WHERE user_id = %s', (amount, user_id))
     conn.commit()
+    c.close()
     conn.close()
 
 # ================= MAIN MENU =================
@@ -88,8 +97,10 @@ def main_menu(user_id):
 def start_msg(message):
     user_id = message.from_user.id
     conn = get_db()
-    conn.cursor().execute('INSERT OR IGNORE INTO users (user_id, balance) VALUES (?, 0)', (user_id,))
+    c = conn.cursor()
+    c.execute('INSERT INTO users (user_id, balance) VALUES (%s, 0) ON CONFLICT (user_id) DO NOTHING', (user_id,))
     conn.commit()
+    c.close()
     conn.close()
     name = message.from_user.first_name if message.from_user.first_name else "User"
     start_text = (
@@ -123,11 +134,12 @@ def how_to_use_cmd(message):
 @bot.message_handler(func=lambda m: m.text == '📦 STOCK')
 def stock_cmd(message):
     conn = get_db()
-    c = conn.cursor()
-    c.execute('SELECT count(*) as c FROM inventory WHERE category="FB" AND status="AVAILABLE"')
+    c = conn.cursor(cursor_factory=RealDictCursor)
+    c.execute("SELECT count(*) as c FROM inventory WHERE category='FB' AND status='AVAILABLE'")
     fb_c = c.fetchone()['c']
-    c.execute('SELECT count(*) as c FROM inventory WHERE category="GOOGLE" AND status="AVAILABLE"')
+    c.execute("SELECT count(*) as c FROM inventory WHERE category='GOOGLE' AND status='AVAILABLE'")
     g_c = c.fetchone()['c']
+    c.close()
     conn.close()
     bot.send_message(message.chat.id, f"▶ *AVAILABLE STOCK* ◀\n\n`📄 FACEBOOK ACCOUNTS ▶ {fb_c}`\n\n`📄 GOOGLE ACCOUNTS  ▶ {g_c}`", parse_mode='Markdown')
 
@@ -171,8 +183,9 @@ def generate_payment(message):
             
             conn = get_db()
             c = conn.cursor()
-            c.execute('INSERT INTO transactions (client_txn_id, user_id, amount, date) VALUES (?, ?, ?, ?)', (client_txn_id, message.from_user.id, amount, date_str))
+            c.execute('INSERT INTO transactions (client_txn_id, user_id, amount, date) VALUES (%s, %s, %s, %s)', (client_txn_id, message.from_user.id, amount, date_str))
             conn.commit()
+            c.close()
             conn.close()
 
             caption = f"PAY ON THIS QR AND CLICK CHECK ✅ TO ADD YOUR BALANCE ✅\n\n🎯 *Amount to Pay:* ₹{amount}\n🧾 *Order ID:* `{client_txn_id}`\n\nइस QR पर ठीक ₹{amount} भुगतान करें और अपना पैसा जोड़ने के लिए Check ✅ पर क्लिक करें ✅"
@@ -240,9 +253,10 @@ def handle_auto_check(call):
 def show_ids(message):
     cat = 'FB' if message.text == 'FACEBOOK ID' else 'GOOGLE'
     conn = get_db()
-    c = conn.cursor()
-    c.execute('SELECT id, price FROM inventory WHERE category=? AND status="AVAILABLE"', (cat,))
+    c = conn.cursor(cursor_factory=RealDictCursor)
+    c.execute('SELECT id, price FROM inventory WHERE category=%s AND status=%s', (cat, 'AVAILABLE'))
     items = c.fetchall()
+    c.close()
     conn.close()
     
     if not items:
@@ -273,8 +287,8 @@ def handle_buy_confirm(call):
     user_id = call.from_user.id
     
     conn = get_db()
-    c = conn.cursor()
-    c.execute('SELECT id, login_details, price FROM inventory WHERE category=? AND status="AVAILABLE" LIMIT ?', (cat, qty))
+    c = conn.cursor(cursor_factory=RealDictCursor)
+    c.execute('SELECT id, login_details, price FROM inventory WHERE category=%s AND status=%s LIMIT %s', (cat, 'AVAILABLE', qty))
     itemsToBuy = c.fetchall()
     
     if len(itemsToBuy) < qty:
@@ -288,14 +302,15 @@ def handle_buy_confirm(call):
         bot.answer_callback_query(call.id, f"Insufficient Balance! You need ₹{total_price} but have ₹{bal}.", show_alert=True)
         return conn.close()
         
-    c.execute('UPDATE users SET balance = balance - ? WHERE user_id=?', (total_price, user_id))
+    c.execute('UPDATE users SET balance = balance - %s WHERE user_id=%s', (total_price, user_id))
     
     delivery_text = ""
     for item in itemsToBuy:
-        c.execute('UPDATE inventory SET status="SOLD" WHERE id=?', (item['id'],))
+        c.execute('UPDATE inventory SET status=%s WHERE id=%s', ('SOLD', item['id']))
         delivery_text += f"`{item['login_details']}`\n"
         
     conn.commit()
+    c.close()
     conn.close()
 
     bot.answer_callback_query(call.id, f"✅ Bought {qty} IDs successfully!", show_alert=False)
@@ -333,8 +348,10 @@ def process_add_admin(message):
     try:
         uid = int(message.text)
         conn = get_db()
-        conn.cursor().execute('INSERT OR IGNORE INTO admins (user_id) VALUES (?)', (uid,))
+        c = conn.cursor()
+        c.execute('INSERT INTO admins (user_id) VALUES (%s) ON CONFLICT (user_id) DO NOTHING', (uid,))
         conn.commit()
+        c.close()
         conn.close()
         bot.send_message(message.chat.id, f"✅ User {uid} is now an Admin!")
         try: bot.send_message(uid, "🎉 You have been promoted to ADMIN! Send /start to refresh your menu.")
@@ -361,9 +378,10 @@ def process_rem_admin(message):
 @bot.callback_query_handler(func=lambda call: call.data == 'admin_manage_inv' and is_admin(call.from_user.id))
 def manage_inv_start(call):
     conn = get_db()
-    c = conn.cursor()
-    c.execute('SELECT id, category, login_details FROM inventory WHERE status="AVAILABLE" ORDER BY id DESC LIMIT 20')
+    c = conn.cursor(cursor_factory=RealDictCursor)
+    c.execute('SELECT id, category, login_details FROM inventory WHERE status=%s ORDER BY id DESC LIMIT 20', ('AVAILABLE',))
     items = c.fetchall()
+    c.close()
     conn.close()
     
     if not items:
@@ -383,8 +401,9 @@ def handle_delete_inv(call):
     inv_id = call.data.replace('admin_delete_inv_', '')
     conn = get_db()
     c = conn.cursor()
-    c.execute('DELETE FROM inventory WHERE id=?', (inv_id,))
+    c.execute('DELETE FROM inventory WHERE id=%s', (inv_id,))
     conn.commit()
+    c.close()
     conn.close()
     bot.answer_callback_query(call.id, f"✅ ID {inv_id} DELETED!", show_alert=True)
     bot.delete_message(call.message.chat.id, call.message.message_id)
@@ -405,8 +424,9 @@ def process_add_id_price(message, cat, login):
         price = int(message.text)
         conn = get_db()
         c = conn.cursor()
-        c.execute('INSERT INTO inventory (category, price, login_details) VALUES (?, ?, ?)', (cat, price, login))
+        c.execute('INSERT INTO inventory (category, price, login_details, status) VALUES (%s, %s, %s, %s)', (cat, price, login, 'AVAILABLE'))
         conn.commit()
+        c.close()
         conn.close()
         bot.send_message(message.chat.id, f"✅ Successfully added 1 {cat} ID for ₹{price} to stock.")
     except:
@@ -445,8 +465,9 @@ def process_bulk_price_final(message, cat, emails, password):
         c = conn.cursor()
         for email in emails:
             login_details = f"{email} | Password: {password}"
-            c.execute('INSERT INTO inventory (category, price, login_details) VALUES (?, ?, ?)', (cat, price, login_details))
+            c.execute('INSERT INTO inventory (category, price, login_details, status) VALUES (%s, %s, %s, %s)', (cat, price, login_details, 'AVAILABLE'))
         conn.commit()
+        c.close()
         conn.close()
         bot.send_message(message.chat.id, f"🎉 Successfully Bulk Added {len(emails)} {cat} IDs to stock at ₹{price} each!", reply_markup=main_menu(message.from_user.id))
     except Exception as e:
@@ -459,9 +480,10 @@ def broadcast_start(call):
 
 def process_broadcast(message):
     conn = get_db()
-    c = conn.cursor()
+    c = conn.cursor(cursor_factory=RealDictCursor)
     c.execute('SELECT user_id FROM users')
     users = c.fetchall()
+    c.close()
     conn.close()
     count = 0
     bot.send_message(message.chat.id, "Broadcasting...")
@@ -491,6 +513,44 @@ def process_addbal_amount(message, uid):
     except:
         bot.send_message(message.chat.id, "Error in Add Balance. Send a valid numeric value.")
 
+# ================= BACKUP SYSTEM =================
+import json
+
+def send_backup():
+    try:
+        conn = get_db()
+        c = conn.cursor(cursor_factory=RealDictCursor)
+        # Backup Users and Inventory
+        c.execute('SELECT * FROM users')
+        users = c.fetchall()
+        c.execute('SELECT * FROM inventory')
+        inv = c.fetchall()
+        c.close()
+        conn.close()
+
+        backup_data = {"users": users, "inventory": inv, "timestamp": str(datetime.now())}
+        with open("backup.json", "w") as f:
+            json.dump(backup_data, f, indent=4)
+        
+        with open("backup.json", "rb") as f:
+            bot.send_document(ADMIN_ID, f, caption=f"☁️ CLOUD DB AUTO-BACKUP (JSON)\nTime: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        print("Cloud Backup sent successfully!")
+    except Exception as e:
+        print(f"Backup failed: {e}")
+
+@bot.message_handler(commands=['backup'])
+def manual_backup(message):
+    if is_admin(message.from_user.id):
+        bot.reply_to(message, "⏳ Generating Cloud Database Backup...")
+        send_backup()
+
+def run_scheduler():
+    # Schedule backup every 24 hours
+    schedule.every(24).hours.do(send_backup)
+    while True:
+        schedule.run_pending()
+        time.sleep(60)
+
 # ================= RENDER KEEP-ALIVE =================
 app = Flask(__name__)
 
@@ -504,12 +564,18 @@ def run_flask():
     app.run(host='0.0.0.0', port=port)
 
 def start_keep_alive():
-    t = threading.Thread(target=run_flask)
-    t.start()
+    # Start Flask
+    t1 = threading.Thread(target=run_flask)
+    t1.start()
+    # Start Scheduler
+    t2 = threading.Thread(target=run_scheduler)
+    t2.start()
 
 start_keep_alive()
 
 print("Starting True Auto-Pay Bot...")
+# Clear webhook and any pending updates to force restart on cloud
+bot.delete_webhook(drop_pending_updates=True)
 while True:
     try:
         bot.polling(none_stop=True, timeout=60, long_polling_timeout=60)
